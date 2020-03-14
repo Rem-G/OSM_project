@@ -23,7 +23,6 @@ class OpenStreetMap:
 		"""
 		:param coordinates list : lat long
 		:return list : lat long, city center of coordinates
-
 		"""
 		data = requests.get('https://nominatim.openstreetmap.org/reverse?format=json&lat={}&lon={}'.format(coordinates[0], coordinates[1]))
 		data_json = data.json()
@@ -54,13 +53,14 @@ class OpenStreetMap:
 
 		return [sum_lat/len(coordinates), sum_long/len(coordinates)]
 
-	def add_layers(self, geojson_data, text):
+	def add_layers(self, geojson_data, text=""):
 		"""
 		Add layers on the folium map
 		:param geojson_data dict: polygon to add on the map
 		:param text list: data to display on the map
 		"""
 		geojson = folium.GeoJson(geojson_data).add_to(self.osm_map)
+
 		if len(self.polygon):
 			popup = folium.Popup('10 most tweeted words :\n' + text, max_width=450)
 		else:
@@ -107,14 +107,23 @@ class OpenStreetMap:
 		:return data list: Sorted data
 		"""
 		cpt = 0
-		for coordinates in data:
-			coor = self.get_city_center(self.avg_coordinates(coordinates['place']['bounding_box']['coordinates'][0]))
-			if coor and not self.coor_in_polygon(coor, self.polygon):
-				data.pop(data.index(coordinates))
-				cpt += 1
-				print(cpt, "tweets out of research area")
+		delete = False
+		data_polygon = list()
 
-		return data
+		for tweet in data:
+			if tweet['place']['place_type'] == 'city':
+				coor = self.get_city_center(self.avg_coordinates(tweet['place']['bounding_box']['coordinates'][0]))
+
+				if self.coor_in_polygon(coor, self.polygon):
+					data_polygon.append(tweet)
+				else:
+					cpt += 1
+					print(cpt, "tweets out of research area")
+			else:
+				cpt += 1
+				print(cpt, "tweets out of research area")		
+
+		return data_polygon
 
 
 	def json_data(self, stopwords = False):
@@ -122,35 +131,33 @@ class OpenStreetMap:
 		Main function of the class, coordinates all elements
 		:param stopwords Bool: Indicate if the program has to display the most frequent words or single tweets
 		"""
-		cpt = 0
 		with open('data.json', 'r') as json_file:
 			data = json.load(json_file)
 
 		if len(self.polygon):
 			data = self.extract_data_polygon(data)
 
-		text_stopwords = str(StopWords(data).sort_data())
+		cpt = 0
+		cities = list()
+		stopword_text = str()
 
-		for coordinates in data:
+		if stopwords:
+			stopword_text = str(StopWords(data).sort_data())
+
+		for tweet in data:
 			print('Tweet {}/{}'.format(cpt, len(data)-1))
 
-			coor = self.get_city_center(self.avg_coordinates(coordinates['place']['bounding_box']['coordinates'][0]))
-			text = None
+			if tweet['place']['place_type'] == 'city' and tweet['place']['name'] not in cities:
+				cities.append(tweet['place']['name'])
+				coor = self.get_city_center(self.avg_coordinates(tweet['place']['bounding_box']['coordinates'][0]))
+				geojson = self.get_osm_geometry(coor)
 
-			if coor:
-				if len(self.polygon) and not self.coor_in_polygon(coor, self.polygon):
-					pass
-				else:
-					geojson = self.get_osm_geometry(coor)
-					if geojson:
-						if stopwords:
-							text = text_stopwords
-						else:
-							text = coordinates['text']
-
-						self.add_layers(geojson, text)
-						print('DONE \n')
-
+				if geojson:#Check if the city is not already in the layers
+					if stopwords:
+						self.add_layers(geojson, stopword_text)
+					else:
+						self.add_layers(geojson, tweet['text'])
+					print('DONE \n')
 			cpt += 1
 
 	def export(self, name="index.html"):
